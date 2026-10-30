@@ -31,6 +31,13 @@ const staticFiles = new Map([
 ]);
 const mime = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8" };
 
+// Behind a proxy (or on serverless hosts like Vercel) the socket can be gone
+// by the time a route runs, so fall back to the forwarded client address.
+function clientIp(request) {
+  const forwarded = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return request.socket?.remoteAddress || request.headers["x-real-ip"] || forwarded || "unknown";
+}
+
 const categories = ["Plumbing", "Electrical", "HVAC", "Custodial", "IT support", "General maintenance", "Inspection", "Safety"];
 const priorities = ["routine", "urgent", "emergency"];
 const statuses = ["triage", "assigned", "in_progress", "waiting_parts", "completed", "cancelled"];
@@ -245,7 +252,7 @@ export function createApp({ db, auth: authAdapter, mailer: mailAdapter, publicUr
   route("POST", "/api/auth/login", async ({ request, response, body }) => {
     const email = normalizeEmail(body.email);
     const password = typeof body.password === "string" ? body.password : "";
-    const ip = request.socket.remoteAddress;
+    const ip = clientIp(request);
     if (!loginLimiter(`${ip}|${email}`)) throw new HttpError(429, "Too many attempts. Wait 15 minutes and try again.");
 
     const user = await auth.signIn(email, password);
@@ -274,7 +281,7 @@ export function createApp({ db, auth: authAdapter, mailer: mailAdapter, publicUr
     const email = normalizeEmail(body.email);
     const fullName = text(body.fullName, 120);
     const password = body.password;
-    if (!emailLimiter(`signup|${request.socket.remoteAddress}`)) throw new HttpError(429, "Too many attempts. Try again later.");
+    if (!emailLimiter(`signup|${clientIp(request)}`)) throw new HttpError(429, "Too many attempts. Try again later.");
     if (!fullName) throw new HttpError(400, "Enter your name.");
     if (!email.endsWith("@gsumail.gram.edu")) throw new HttpError(403, knownErrors.SIGNUP_REQUIRES_INVITATION[1], { code: "SIGNUP_REQUIRES_INVITATION" });
     const problem = passwordProblem(password);
@@ -290,7 +297,7 @@ export function createApp({ db, auth: authAdapter, mailer: mailAdapter, publicUr
 
   route("POST", "/api/auth/resend-verification", async ({ request, body }) => {
     const email = normalizeEmail(body.email);
-    if (!emailLimiter(`verify|${request.socket.remoteAddress}|${email}`)) throw new HttpError(429, "Too many attempts. Try again later.");
+    if (!emailLimiter(`verify|${clientIp(request)}|${email}`)) throw new HttpError(429, "Too many attempts. Try again later.");
     await auth.resendVerification(email);
     return { ok: true, message: "If that account is waiting for verification, a new link is on its way." };
   }, { auth: false });
@@ -303,7 +310,7 @@ export function createApp({ db, auth: authAdapter, mailer: mailAdapter, publicUr
 
   route("POST", "/api/auth/forgot", async ({ request, body }) => {
     const email = normalizeEmail(body.email);
-    if (!emailLimiter(`forgot|${request.socket.remoteAddress}|${email}`)) throw new HttpError(429, "Too many attempts. Try again later.");
+    if (!emailLimiter(`forgot|${clientIp(request)}|${email}`)) throw new HttpError(429, "Too many attempts. Try again later.");
     await auth.requestPasswordReset(email);
     return { ok: true, message: "If an account exists for that email, a reset link is on its way." };
   }, { auth: false });
