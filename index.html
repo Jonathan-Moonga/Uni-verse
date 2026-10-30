@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Tiger Ops is a V1 campus operations prototype for housing, maintenance, IT, and university leadership."
+    />
+    <meta name="theme-color" content="#111111" />
+    <title>Tiger Ops | Campus Operations</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <div id="boot-screen" class="boot-screen" role="status">Loading Tiger Ops…</div>
+    <div id="auth-root" class="auth-root" hidden></div>
+    <div class="app-shell" id="app-shell" hidden>
+      <aside class="sidebar" aria-label="Primary navigation">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true">G</div>
+          <div>
+            <strong>Tiger Ops</strong>
+            <span>Grambling pilot</span>
+          </div>
+        </div>
+
+        <nav class="nav-list" id="primary-nav">
+          <button class="nav-item is-active" data-view="overview" type="button">
+            <span aria-hidden="true">⌂</span> Overview
+          </button>
+          <button class="nav-item" data-view="work-orders" type="button">
+            <span aria-hidden="true">▣</span> Work orders
+            <span class="nav-count" id="work-order-count">0</span>
+          </button>
+          <button class="nav-item" data-view="map" type="button">
+            <span aria-hidden="true">⌖</span> Campus map
+          </button>
+          <button class="nav-item" data-view="floors" type="button">
+            <span aria-hidden="true">▤</span> Floor plans
+          </button>
+          <button class="nav-item" data-view="organization" type="button">
+            <span aria-hidden="true">⌘</span> Organization & access
+          </button>
+          <button class="nav-item" data-view="people" type="button" data-requires="people">
+            <span aria-hidden="true">☷</span> People & invitations
+          </button>
+          <button class="nav-item" data-view="audit" type="button">
+            <span aria-hidden="true">◷</span> Audit history
+          </button>
+          <button class="nav-item" data-view="account" type="button">
+            <span aria-hidden="true">◉</span> My account
+          </button>
+        </nav>
+
+        <div class="pilot-note">
+          <span class="eyebrow">V1 pilot</span>
+          <p>Housing coordination, nested maintenance, scoped work orders, the official campus map, and modeled 2D floor plans.</p>
+        </div>
+      </aside>
+
+      <div class="main-column">
+        <header class="topbar">
+          <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open navigation" aria-expanded="false">☰</button>
+          <div class="topbar-title">
+            <span class="eyebrow">Campus operations</span>
+            <strong id="page-title">Command overview</strong>
+          </div>
+          <div class="user-menu">
+            <button class="user-chip" id="user-chip" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="user-popover">
+              <span class="avatar" id="user-initials" aria-hidden="true"></span>
+              <span class="user-chip-text"><strong id="user-name"></strong><small id="user-role"></small></span>
+            </button>
+            <div class="user-popover" id="user-popover" hidden>
+              <button type="button" data-view="account">My account</button>
+              <a href="/?mailbox" id="mailbox-link" hidden>Dev mailbox</a>
+              <button type="button" data-action="sign-out">Sign out</button>
+            </div>
+          </div>
+        </header>
+
+        <main id="main-content" tabindex="-1">
+          <section id="view-root" aria-live="polite"></section>
+        </main>
+      </div>
+    </div>
+
+    <dialog id="work-order-dialog" class="detail-dialog" aria-labelledby="work-order-dialog-title">
+      <div id="work-order-dialog-content"></div>
+    </dialog>
+
+    <dialog id="create-dialog" class="detail-dialog" aria-labelledby="create-dialog-title">
+      <form id="create-work-order-form" method="dialog">
+        <div class="dialog-header">
+          <div>
+            <span class="eyebrow">New request</span>
+            <h2 id="create-dialog-title">Report a campus issue</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close dialog">×</button>
+        </div>
+        <div class="form-grid">
+          <label>
+            Issue title
+            <input name="title" required maxlength="90" placeholder="Example: Sink leaking under basin" />
+          </label>
+          <label>
+            Category
+            <select name="category" required>
+              <option value="Plumbing">Plumbing</option>
+              <option value="Electrical">Electrical</option>
+              <option value="HVAC">HVAC</option>
+              <option value="Custodial">Custodial</option>
+              <option value="IT support">IT support</option>
+              <option value="General maintenance">General maintenance</option>
+              <option value="Safety">Safety hazard</option>
+            </select>
+          </label>
+          <label>
+            Building
+            <select name="buildingId" id="create-building" required></select>
+          </label>
+          <label>
+            Room or area
+            <input name="room" maxlength="20" placeholder="Example: 214 or Main lobby" />
+          </label>
+          <label>
+            Priority
+            <select name="priority" required>
+              <option value="routine">Routine</option>
+              <option value="urgent">Urgent</option>
+              <option value="emergency">Emergency — call campus emergency services first</option>
+            </select>
+          </label>
+          <label class="span-2">
+            What is happening?
+            <textarea name="description" required rows="4" maxlength="500" placeholder="Describe the issue, when it started, and any access instructions."></textarea>
+          </label>
+          <label class="checkbox-row span-2">
+            <input type="checkbox" name="entryAllowed" />
+            Authorized staff may enter if I am not present.
+          </label>
+        </div>
+        <div class="dialog-actions">
+          <button class="button secondary" value="cancel">Cancel</button>
+          <button class="button primary" value="submit">Create work order</button>
+        </div>
+      </form>
+    </dialog>
+
+    <button class="agent-launcher" id="agent-launcher" type="button" aria-label="Open Tiger AI copilot" aria-expanded="false" aria-controls="agent-panel" hidden>
+      <span class="agent-orb" aria-hidden="true"></span>
+      <span><strong>Ask Tiger</strong><small>Voice + actions</small></span>
+    </button>
+
+    <section class="agent-panel" id="agent-panel" aria-label="Tiger AI copilot" hidden>
+      <header class="agent-header">
+        <div class="agent-identity"><span class="agent-orb" aria-hidden="true"></span><div><strong>Tiger Copilot</strong><small id="agent-role">Role-aware campus agent</small></div></div>
+        <div class="agent-header-actions">
+          <button class="agent-icon-button is-active" id="agent-voice" type="button" aria-label="Turn spoken responses off" aria-pressed="true">Voice</button>
+          <button class="agent-icon-button" id="agent-close" type="button" aria-label="Close copilot">&times;</button>
+        </div>
+      </header>
+      <div class="agent-privacy"><span aria-hidden="true">&#9679;</span> Uses the permissions of your signed-in role. Actions wait for approval.</div>
+      <div class="agent-messages" id="agent-messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+      <div class="agent-suggestions" id="agent-suggestions" aria-label="Suggested prompts"></div>
+      <form class="agent-composer" id="agent-form">
+        <label class="sr-only" for="agent-input">Message Tiger Copilot</label>
+        <input id="agent-input" name="message" maxlength="1000" autocomplete="off" placeholder="Try “Show me Bowen”" required />
+        <button class="agent-mic" id="agent-mic" type="button" aria-label="Speak to Tiger" hidden>Mic</button>
+        <button class="agent-send" type="submit">Send</button>
+      </form>
+      <footer class="agent-runtime" id="agent-runtime">Local open-weight AI ready when Ollama is running</footer>
+    </section>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
