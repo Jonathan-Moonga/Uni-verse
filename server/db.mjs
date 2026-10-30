@@ -66,6 +66,7 @@ export async function openDatabase({ dataDir = null, demo = true } = {}) {
   await migrate(pg, { demo });
 
   return {
+    kind: "local",
     pg,
     // Runs as Supabase's `authenticated` role with the user's id in the JWT
     // claims, exactly how PostgREST executes requests, so RLS applies.

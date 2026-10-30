@@ -45,6 +45,33 @@ OLLAMA_MODEL=qwen3:4b
 OLLAMA_TIMEOUT_MS=7000
 ```
 
+## Supabase deployment
+
+The repository includes a live-ready PostgreSQL adapter, Supabase Auth adapter,
+row-level security, migrations, reference data, and a non-secret readiness test.
+
+```bash
+npx supabase login --agent no
+npx supabase link --project-ref YOUR_PROJECT_REF
+npx supabase db push --linked --include-seed
+npm run supabase:check
+```
+
+Copy `.env.example` to `.env` and add the project URL, publishable key, secret
+server key, and `DATABASE_URL`. Use the Session pooler connection string from
+**Supabase → Project Settings → Database**. `.env` is ignored by Git and must
+never be committed. When `DATABASE_URL` is present, the server automatically
+uses live Supabase PostgreSQL and Supabase Auth; otherwise it uses the local
+PGlite demo database.
+
+Hosted Supabase projects on the default free email provider use its standard
+confirmation and recovery emails. The app accepts those redirect tokens. The
+branded templates in `supabase/templates` can be enabled after custom SMTP is
+configured.
+
+For real outbound agent email, set `RESEND_API_KEY` and `MAIL_FROM`. Without
+them, approved messages are still stored in the auditable outbox for demos.
+
 ## Demo script
 
 1. Sign in as Housing Director and open **Ask Tiger**.
@@ -91,6 +118,7 @@ Existing API → PostgreSQL RLS → database audit trigger
 ```bash
 npm test
 npm run build
+npm run supabase:check
 ```
 
 For a competition submission, publish this repository publicly on GitHub, retain the MIT license, and include the repo link, demo link or short video, project description, and technologies used.

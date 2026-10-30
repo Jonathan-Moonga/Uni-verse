@@ -24,8 +24,9 @@ function mapCreateError(status, data) {
   return new AuthError(`Supabase Auth error ${status}: ${message}`);
 }
 
-export function createSupabaseAuth({ url, anonKey, serviceKey, fetchImpl = fetch }) {
+export function createSupabaseAuth({ url, anonKey, serviceKey, redirectUrl, fetchImpl = fetch }) {
   const base = `${url.replace(/\/+$/, "")}/auth/v1`;
+  const redirect = redirectUrl ? `?redirect_to=${encodeURIComponent(redirectUrl)}` : "";
 
   async function call(path, { method = "POST", key = anonKey, bearer, body } = {}) {
     const response = await fetchImpl(`${base}${path}`, { method, headers: headers(key, bearer), body: body ? JSON.stringify(body) : undefined });
@@ -45,24 +46,29 @@ export function createSupabaseAuth({ url, anonKey, serviceKey, fetchImpl = fetch
 
     async signUpStudent({ email, password, metadata }) {
       // With confirmations on, an existing email returns a look-alike success.
-      const { ok, status, data } = await call("/signup", { body: { email, password, data: metadata } });
+      const { ok, status, data } = await call(`/signup${redirect}`, { body: { email, password, data: metadata } });
       if (!ok) throw mapCreateError(status, data);
     },
 
     async resendVerification(email) {
-      await call("/resend", { body: { type: "signup", email } });
+      await call(`/resend${redirect}`, { body: { type: "signup", email } });
     },
 
     async verifyEmail(token) {
-      const { ok, data } = await call("/verify", { body: { type: "email", token_hash: String(token || "") } });
+      const { ok, data } = await call("/verify", { body: { type: "signup", token_hash: String(token || "") } });
       return ok ? data.user?.email ?? null : null;
     },
 
     async requestPasswordReset(email) {
-      await call("/recover", { body: { email } });
+      await call(`/recover${redirect}`, { body: { email } });
     },
 
     async resetPassword(token, password) {
+      if (String(token || "").startsWith("eyJ")) {
+        const updated = await call("/user", { method: "PUT", bearer: token, body: { password } });
+        if (!updated.ok) throw mapCreateError(updated.status, updated.data);
+        return updated.data.id;
+      }
       const verified = await call("/verify", { body: { type: "recovery", token_hash: String(token || "") } });
       if (!verified.ok) return null;
       const updated = await call("/user", { method: "PUT", bearer: verified.data.access_token, body: { password } });

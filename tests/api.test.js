@@ -51,6 +51,12 @@ test("only the browser app is served, never server code or SQL", async () => {
   assert.equal((await fetch(`${base}/permissions.js`)).status, 200);
 });
 
+test("health endpoint verifies the active database and auth adapters", async () => {
+  const response = await fetch(`${base}/api/health`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, database: "local", auth: "local" });
+});
+
 test("student signs up with a GSU student email, verifies, then signs in", async () => {
   const call = client();
   const bad = await call("POST", "/api/auth/signup", { email: "kid@gmail.com", password: "Password123", fullName: "Kid" });

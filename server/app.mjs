@@ -2,21 +2,20 @@ import { createReadStream, existsSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { buildings, roleTemplates } from "../data.js";
 import {
-  DUMMY_HASH,
   SESSION_COOKIE,
   SESSION_HOURS,
   clearSessionCookie,
   createRateLimiter,
-  hashPassword,
   hashToken,
   newToken,
   parseCookies,
   passwordProblem,
-  sessionCookie,
-  verifyPassword
+  sessionCookie
 } from "./auth.mjs";
 import { demoAccounts } from "./demo.mjs";
 import { answerAgent, isCampusEmail } from "./agent.mjs";
+import { createLocalAuth } from "./auth-local.mjs";
+import { createMailer } from "./mailer.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 // Only the browser app is served. Server code, SQL, and data never leave disk.
@@ -39,6 +38,9 @@ const statuses = ["triage", "assigned", "in_progress", "waiting_parts", "complet
 // Database error codes raised by the migration → user-facing responses.
 const knownErrors = {
   NOT_AUTHENTICATED: [401, "Please sign in again."],
+  EMAIL_NOT_VERIFIED: [403, "Verify your email before signing in. Check your inbox for the link."],
+  SIGNUP_REJECTED: [403, "This account cannot be created. Use an eligible student email or ask for an invitation."],
+  WEAK_PASSWORD: [400, "Use at least 10 characters with letters and numbers."],
   INVITE_NOT_PERMITTED: [403, "Your role can't send invitations."],
   ROLE_NOT_INVITABLE: [403, "Your role can't invite people into that role."],
   ORG_OUT_OF_SCOPE: [403, "That department is outside your scope."],
@@ -169,7 +171,9 @@ function mapWorkOrder(row) {
   };
 }
 
-export function createApp({ db, publicUrl, devMode = false, logMail = true }) {
+export function createApp({ db, auth: authAdapter, mailer: mailAdapter, publicUrl, devMode = false, logMail = true }) {
+  const mailer = mailAdapter ?? createMailer({ log: logMail });
+  const auth = authAdapter ?? createLocalAuth({ db, mailer, publicUrl });
   const loginLimiter = createRateLimiter({ limit: 10, windowMs: 15 * 60_000 });
   const emailLimiter = createRateLimiter({ limit: 5, windowMs: 15 * 60_000 });
   const routes = [];
@@ -180,17 +184,7 @@ export function createApp({ db, publicUrl, devMode = false, logMail = true }) {
   };
 
   async function sendMail(tx, { to, subject, body, link }) {
-    await tx.query("insert into server_private.outbox (to_email, subject, body, link) values ($1, $2, $3, $4)", [to, subject, body, link ?? null]);
-    if (logMail) console.log(`✉  ${to} — ${subject}${link ? `\n   ${link}` : ""}`);
-  }
-
-  async function issueEmailToken(tx, userId, purpose, hours) {
-    const token = newToken();
-    await tx.query(
-      "insert into local.email_tokens (token_hash, user_id, purpose, expires_at) values ($1, $2, $3, now() + make_interval(hours => $4))",
-      [hashToken(token), userId, purpose, hours]
-    );
-    return token;
+    return mailer.send(tx, { to, subject, body, link });
   }
 
   async function startSession(response, request, userId) {
@@ -200,7 +194,6 @@ export function createApp({ db, publicUrl, devMode = false, logMail = true }) {
         "insert into server_private.sessions (token_hash, user_id, expires_at, user_agent) values ($1, $2, now() + make_interval(hours => $3), $4)",
         [hashToken(token), userId, SESSION_HOURS, text(request.headers["user-agent"], 200)]
       );
-      await tx.query("update auth.users set last_sign_in_at = now() where id = $1", [userId]);
     });
     response.setHeader("set-cookie", sessionCookie(token, { secure: publicUrl.startsWith("https:") }));
   }
@@ -231,6 +224,15 @@ export function createApp({ db, publicUrl, devMode = false, logMail = true }) {
 
   /* ----- Session and sign-in ----- */
 
+  route("GET", "/api/health", async () => {
+    await db.asService((tx) => tx.query("select 1"));
+    if (auth.settings) {
+      const settings = await auth.settings();
+      if (!settings.ok) throw new HttpError(503, "Authentication service is unavailable.");
+    }
+    return { ok: true, database: db.kind, auth: auth.kind };
+  }, { auth: false });
+
   route("GET", "/api/session", async ({ userId }) => {
     const profile = userId ? await loadProfile(userId) : null;
     const usable = profile && !accessProblem(profile);
@@ -246,24 +248,19 @@ export function createApp({ db, publicUrl, devMode = false, logMail = true }) {
     const ip = request.socket.remoteAddress;
     if (!loginLimiter(`${ip}|${email}`)) throw new HttpError(429, "Too many attempts. Wait 15 minutes and try again.");
 
-    const { rows } = await db.asService((tx) => tx.query(
-      "select u.id, u.encrypted_password, p.role_key from auth.users u left join public.profiles p on p.id = u.id where u.email = $1",
-      [email]
-    ));
-    const user = rows[0];
-    const valid = await verifyPassword(password, user?.encrypted_password ?? DUMMY_HASH);
-    if (!user || !valid) throw new HttpError(401, "Email or password is incorrect.");
+    const user = await auth.signIn(email, password);
+    if (!user) throw new HttpError(401, "Email or password is incorrect.");
 
-    const portal = portalFor(user.role_key);
+    const profile = await loadProfile(user.userId);
+    const problem = accessProblem(profile);
+    if (problem) throw new HttpError(problem[0], problem[1], { code: problem[2] });
+    const portal = portalFor(profile.role);
     if (body.portal && body.portal !== portal) {
       throw new HttpError(409, `This account signs in through the ${portal === "student" ? "Student" : portal === "partner" ? "Partner" : "Faculty & staff"} portal.`, { portal });
     }
 
-    const profile = await loadProfile(user.id);
-    const problem = accessProblem(profile);
-    if (problem) throw new HttpError(problem[0], problem[1], { code: problem[2] });
-    await startSession(response, request, user.id);
-    return { user: await loadProfile(user.id) };
+    await startSession(response, request, user.userId);
+    return { user: profile };
   }, { auth: false });
 
   route("POST", "/api/auth/logout", async ({ request, response }) => {
@@ -283,21 +280,10 @@ export function createApp({ db, publicUrl, devMode = false, logMail = true }) {
     const problem = passwordProblem(password);
     if (problem) throw new HttpError(400, problem);
     const homeBuilding = buildings.find((b) => b.id === body.homeBuildingId && b.type === "residence" && !b.offline);
-    const passwordHash = await hashPassword(password);
-
-    await db.asService(async (tx) => {
-      const existing = await tx.query("select id from auth.users where email = $1", [email]);
-      if (existing.rows.length) {
-        // Same response either way, so sign-up can't be used to probe for accounts.
-        await sendMail(tx, { to: email, subject: "You already have a Tiger Ops account", body: "Someone tried to create an account with this email. If it was you, sign in or reset your password.", link: `${publicUrl}/?reset=request` });
-        return;
-      }
-      const { rows } = await tx.query(
-        "insert into auth.users (email, encrypted_password, raw_user_meta_data) values ($1, $2, $3) returning id",
-        [email, passwordHash, JSON.stringify({ full_name: fullName, home_building_id: homeBuilding?.id ?? null, home_room: text(body.homeRoom, 16) || null })]
-      );
-      const token = await issueEmailToken(tx, rows[0].id, "verify_email", 48);
-      await sendMail(tx, { to: email, subject: "Verify your Tiger Ops student account", body: `Hi ${fullName}, confirm your GSU student email to finish creating your account. The link works for 48 hours.`, link: `${publicUrl}/?verify=${token}` });
+    await auth.signUpStudent({
+      email,
+      password,
+      metadata: { full_name: fullName, home_building_id: homeBuilding?.id ?? null, home_room: text(body.homeRoom, 16) || null }
     });
     return { ok: true, message: `We sent a verification link to ${email}.` };
   }, { auth: false });
@@ -305,26 +291,12 @@ export function createApp({ db, publicUrl, devMode = false, logMail = true }) {
   route("POST", "/api/auth/resend-verification", async ({ request, body }) => {
     const email = normalizeEmail(body.email);
     if (!emailLimiter(`verify|${request.socket.remoteAddress}|${email}`)) throw new HttpError(429, "Too many attempts. Try again later.");
-    await db.asService(async (tx) => {
-      const { rows } = await tx.query("select id from auth.users where email = $1 and email_confirmed_at is null", [email]);
-      if (!rows.length) return;
-      const token = await issueEmailToken(tx, rows[0].id, "verify_email", 48);
-      await sendMail(tx, { to: email, subject: "Verify your Tiger Ops student account", body: "Here's a new verification link. It works for 48 hours.", link: `${publicUrl}/?verify=${token}` });
-    });
+    await auth.resendVerification(email);
     return { ok: true, message: "If that account is waiting for verification, a new link is on its way." };
   }, { auth: false });
 
   route("POST", "/api/auth/verify", async ({ body }) => {
-    const result = await db.asService(async (tx) => {
-      const { rows } = await tx.query(
-        `update local.email_tokens set used_at = now()
-         where token_hash = $1 and purpose = 'verify_email' and used_at is null and expires_at > now()
-         returning user_id`, [hashToken(text(body.token, 200))]
-      );
-      if (!rows.length) return null;
-      const user = await tx.query("update auth.users set email_confirmed_at = coalesce(email_confirmed_at, now()) where id = $1 returning email", [rows[0].user_id]);
-      return user.rows[0].email;
-    });
+    const result = await auth.verifyEmail(text(body.token, 200));
     if (!result) throw new HttpError(410, "This verification link is invalid or expired. Request a new one from the sign-in page.");
     return { ok: true, email: result };
   }, { auth: false });
@@ -332,31 +304,16 @@ export function createApp({ db, publicUrl, devMode = false, logMail = true }) {
   route("POST", "/api/auth/forgot", async ({ request, body }) => {
     const email = normalizeEmail(body.email);
     if (!emailLimiter(`forgot|${request.socket.remoteAddress}|${email}`)) throw new HttpError(429, "Too many attempts. Try again later.");
-    await db.asService(async (tx) => {
-      const { rows } = await tx.query("select id from auth.users where email = $1", [email]);
-      if (!rows.length) return;
-      const token = await issueEmailToken(tx, rows[0].id, "reset_password", 1);
-      await sendMail(tx, { to: email, subject: "Reset your Tiger Ops password", body: "Use this link within one hour to choose a new password. If you didn't ask for this, ignore this email.", link: `${publicUrl}/?reset=${token}` });
-    });
+    await auth.requestPasswordReset(email);
     return { ok: true, message: "If an account exists for that email, a reset link is on its way." };
   }, { auth: false });
 
   route("POST", "/api/auth/reset", async ({ body }) => {
     const problem = passwordProblem(body.password);
     if (problem) throw new HttpError(400, problem);
-    const passwordHash = await hashPassword(body.password);
-    const ok = await db.asService(async (tx) => {
-      const { rows } = await tx.query(
-        `update local.email_tokens set used_at = now()
-         where token_hash = $1 and purpose = 'reset_password' and used_at is null and expires_at > now()
-         returning user_id`, [hashToken(text(body.token, 200))]
-      );
-      if (!rows.length) return false;
-      await tx.query("update auth.users set encrypted_password = $2, email_confirmed_at = coalesce(email_confirmed_at, now()) where id = $1", [rows[0].user_id, passwordHash]);
-      await tx.query("delete from server_private.sessions where user_id = $1", [rows[0].user_id]);
-      return true;
-    });
-    if (!ok) throw new HttpError(410, "This reset link is invalid or expired. Request a new one.");
+    const userId = await auth.resetPassword(text(body.token, 4096), body.password);
+    if (!userId) throw new HttpError(410, "This reset link is invalid or expired. Request a new one.");
+    await db.asService((tx) => tx.query("delete from server_private.sessions where user_id = $1", [userId]));
     return { ok: true };
   }, { auth: false });
 
@@ -385,16 +342,15 @@ export function createApp({ db, publicUrl, devMode = false, logMail = true }) {
     const problem = passwordProblem(body.password);
     if (problem) throw new HttpError(400, problem);
     if (!fullName) throw new HttpError(400, "Enter your name.");
-    const passwordHash = await hashPassword(body.password);
     const { rows: preview } = await db.asAnon((tx) => tx.query("select email, status from public.invitation_preview($1)", [token]));
     if (!preview.length || preview[0].status !== "pending") throw new HttpError(410, knownErrors.INVITATION_INVALID[1]);
-    const { rows } = await db.asService((tx) => tx.query(
-      // The invite link proves control of the inbox, so the email counts as verified.
-      "insert into auth.users (email, encrypted_password, email_confirmed_at, raw_user_meta_data) values ($1, $2, now(), $3) returning id",
-      [preview[0].email, passwordHash, JSON.stringify({ invitation_token: token, full_name: fullName })]
-    ));
-    await startSession(response, request, rows[0].id);
-    return { user: await loadProfile(rows[0].id) };
+    const userId = await auth.adminCreateUser({
+      email: preview[0].email,
+      password: body.password,
+      metadata: { invitation_token: token, full_name: fullName }
+    });
+    await startSession(response, request, userId);
+    return { user: await loadProfile(userId) };
   }, { auth: false });
 
   /* ----- Signed-in account ----- */
@@ -407,11 +363,10 @@ export function createApp({ db, publicUrl, devMode = false, logMail = true }) {
   route("POST", "/api/account/password", async ({ request, response, userId, body }) => {
     const problem = passwordProblem(body.next);
     if (problem) throw new HttpError(400, problem);
-    const { rows } = await db.asService((tx) => tx.query("select encrypted_password from auth.users where id = $1", [userId]));
-    if (!(await verifyPassword(String(body.current || ""), rows[0]?.encrypted_password))) throw new HttpError(400, "Your current password is incorrect.");
-    const passwordHash = await hashPassword(body.next);
+    const profile = await loadProfile(userId);
+    if (!(await auth.checkPassword(profile.email, String(body.current || "")))) throw new HttpError(400, "Your current password is incorrect.");
+    await auth.setPassword(userId, body.next);
     await db.asService(async (tx) => {
-      await tx.query("update auth.users set encrypted_password = $2 where id = $1", [userId, passwordHash]);
       await tx.query("delete from server_private.sessions where user_id = $1", [userId]);
     });
     await startSession(response, request, userId);

@@ -50,9 +50,9 @@ port = 54329
 # Configure one of the supported pooler modes: `transaction`, `session`.
 pool_mode = "transaction"
 # How many server connections to allow per user/database pair.
-default_pool_size = 20
+default_pool_size = 15
 # Maximum number of client connections allowed.
-max_client_conn = 100
+max_client_conn = 200
 
 # [db.vault]
 # secret_key = "env(SECRET_VALUE)"
@@ -146,7 +146,7 @@ max_catalogs = 2
 
 # Store vector embeddings in S3 for large and durable datasets
 [storage.vector]
-enabled = true
+enabled = false
 max_buckets = 10
 max_indexes = 5
 
@@ -228,11 +228,11 @@ enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
-max_frequency = "1s"
+max_frequency = "1m"
 # Number of characters used in the email OTP.
-otp_length = 6
+otp_length = 8
 # Number of seconds before the email OTP expires (defaults to 1 hour).
-otp_expiry = 86400
+otp_expiry = 3600
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]
@@ -244,15 +244,16 @@ otp_expiry = 86400
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
-# Tiger Ops verifies tokens on its own server, so these links point at the app
-# (PUBLIC_URL) with a token hash rather than at Supabase's redirect endpoint.
-[auth.email.template.confirmation]
-subject = "Verify your Tiger Ops student account"
-content_path = "./supabase/templates/confirmation.html"
+# Optional branded email templates for projects with custom SMTP enabled.
+# Custom templates are ready in supabase/templates, but Supabase's hosted free
+# email provider does not allow deploying them. Uncomment after SMTP is added.
+# [auth.email.template.confirmation]
+# subject = "Verify your Tiger Ops student account"
+# content_path = "./supabase/templates/confirmation.html"
 
-[auth.email.template.recovery]
-subject = "Reset your Tiger Ops password"
-content_path = "./supabase/templates/recovery.html"
+# [auth.email.template.recovery]
+# subject = "Reset your Tiger Ops password"
+# content_path = "./supabase/templates/recovery.html"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]
@@ -311,8 +312,8 @@ max_enrolled_factors = 10
 
 # Control MFA via App Authenticator (TOTP)
 [auth.mfa.totp]
-enroll_enabled = false
-verify_enabled = false
+enroll_enabled = true
+verify_enabled = true
 
 # Configure MFA via Phone Messaging
 [auth.mfa.phone]

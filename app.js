@@ -88,7 +88,9 @@ const agentMic = document.querySelector("#agent-mic");
 const agentVoice = document.querySelector("#agent-voice");
 const agentRuntime = document.querySelector("#agent-runtime");
 
-const hashView = window.location.hash.slice(1);
+const initialHash = window.location.hash.slice(1);
+const initialAuthHash = initialHash.includes("access_token=") ? new URLSearchParams(initialHash) : null;
+const hashView = initialAuthHash ? "" : initialHash;
 const state = {
   user: null,
   demo: null,
@@ -2175,6 +2177,16 @@ async function boot() {
     return;
   }
   state.demo = session.demo;
+
+  if (initialAuthHash?.get("access_token")) {
+    const type = initialAuthHash.get("type");
+    const accessToken = initialAuthHash.get("access_token");
+    window.history.replaceState(null, "", window.location.pathname);
+    if (type === "recovery") return showAuth("reset", { token: accessToken });
+    if (["signup", "email_change"].includes(type)) {
+      return showAuth("login", { notice: "Email verified. Sign in to continue." });
+    }
+  }
 
   if (params.get("invite")) return showAuth("invite", { token: params.get("invite"), preview: null });
   if (params.get("verify")) return showAuth("verify", { token: params.get("verify") });

@@ -8,6 +8,7 @@
     "dev": "node server/index.mjs",
     "db:seed-sql": "node scripts/generate-seed.mjs",
     "db:reset": "node scripts/reset-local-db.mjs",
+    "supabase:check": "node scripts/check-supabase.mjs",
     "build": "node scripts/build.mjs",
     "test": "node --test",
     "check": "npm run test && npm run build"
@@ -21,6 +22,6 @@
   },
   "devDependencies": {
     "@electric-sql/pglite-socket": "0.2.16",
-    "supabase": "2.120.0"
+    "supabase": "^2.122.0"
   }
 }
