@@ -58,6 +58,14 @@ export default async function handler(request, response) {
   const { origin, host } = request.headers;
   if (origin && host && origin === `https://${host}`) delete request.headers.origin;
 
+  // Vercel requests have no socket, but the sign-in rate limiter keys on the
+  // client IP. Use the address Vercel forwards instead.
+  if (!request.socket) {
+    const forwarded = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
+    const remoteAddress = request.headers["x-real-ip"] || forwarded || "unknown";
+    Object.defineProperty(request, "socket", { value: { remoteAddress }, configurable: true });
+  }
+
   try {
     ready ??= build();
     const app = await ready;
