@@ -174,8 +174,16 @@ async function askOllama(context) {
   const response = await fetch(`${baseUrl}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model, stream: false, messages: [{ role: "system", content: system }, { role: "user", content: context.message }], options: { temperature: 0.2 } }),
-    signal: AbortSignal.timeout(Number(process.env.OLLAMA_TIMEOUT_MS || 7000))
+    body: JSON.stringify({
+      model,
+      stream: false,
+      think: false,
+      format: "json",
+      keep_alive: "10m",
+      messages: [{ role: "system", content: system }, { role: "user", content: context.message }],
+      options: { temperature: 0.2, num_predict: 512 }
+    }),
+    signal: AbortSignal.timeout(Number(process.env.OLLAMA_TIMEOUT_MS || 30000))
   });
   if (!response.ok) throw new Error(`Ollama returned ${response.status}`);
   const payload = await response.json();
@@ -187,7 +195,8 @@ async function askOllama(context) {
 export async function answerAgent(context) {
   try {
     return await askOllama(context);
-  } catch {
+  } catch (error) {
+    console.warn(`Tiger switched to its fallback router: ${error?.message || "unknown model error"}`);
     return { ...fallbackAgentResponse(context), runtime: { provider: "Built-in demo router", model: null, fallback: true } };
   }
 }
